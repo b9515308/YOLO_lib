@@ -57,7 +57,6 @@ void forward_detection_layer(const detection_layer l, network net)
     memcpy(l.output, net.input, l.outputs*l.batch*sizeof(float));
     //if(l.reorg) reorg(l.output, l.w*l.h, size*l.n, l.batch, 1);
     int b;
-    printf("[Lucas] %s\n", __func__);
     if (l.softmax){
 	printf("[Lucas] do softmax \n");
         for(b = 0; b < l.batch; ++b){
@@ -70,7 +69,6 @@ void forward_detection_layer(const detection_layer l, network net)
         }
     }
     
-    printf("[Lucas] A \n");
     if(net.train){
 	printf("[Lucas] traning \n");
         float avg_iou = 0;

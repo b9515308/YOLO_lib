@@ -194,6 +194,7 @@ void forward_network(network *netp)
     for(i = 0; i < net.n; ++i){
         net.index = i;
         layer l = net.layers[i];
+        /*[Lucas review] clear l.delta*/
         if(l.delta){
             fill_cpu(l.outputs * l.batch, 0, l.delta, 1);
         }
@@ -274,10 +275,12 @@ void backward_network(network *netp)
             net = orig;
         }else{
             layer prev = net.layers[i-1];
+	    /*Lucas review net.input/delta is for layer-1.*/
             net.input = prev.output;
             net.delta = prev.delta;
         }
         net.index = i;
+	/*[Lucas] do backward walk and save delta to prev.delta*/
         l.backward(l, net);
     }
 }
@@ -315,8 +318,12 @@ float train_network(network *net, data d)
 
     int i;
     float sum = 0;
+    /*[Lucas review] n = 4, by subdivision*/
     for(i = 0; i < n; ++i){
+	/*[Lucas review] copy d.x and d.y to net->input and net->truth accordingly*/
         get_next_batch(d, batch, i*batch, net->input, net->truth);
+	/*[Lucas review] net->input layout row0 = sample 0 (h*w*3), row1 = sample 1... row15 = sample15 */
+	/*[Lucas review] net->truth layout ground data 0, ground data1,...ground data 15 */
         float err = train_network_datum(net);
         sum += err;
     }

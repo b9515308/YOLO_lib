@@ -444,9 +444,11 @@ void backward_bias(float *bias_updates, float *delta, int batch, int n, int size
 void forward_convolutional_layer(convolutional_layer l, network net)
 {
     int i, j;
-
+    /*[Lucas review] clear l.ouput to 0 for samples in the same batch*/
     fill_cpu(l.outputs*l.batch, 0, l.output, 1);
 
+    /*[Lucas review] FIXME: should study it. From paper, binarize weight and input can speed up calculation, details could refer to paper 
+    BinaryConnect: Training Deep Neural Networks with binary weights during propagations */
     if(l.xnor){
         binarize_weights(l.weights, l.n, l.c/l.groups*l.size*l.size, l.binary_weights);
         swap_binary(&l);
@@ -470,6 +472,7 @@ void forward_convolutional_layer(convolutional_layer l, network net)
     }
 
     if(l.batch_normalize){
+    /*[Lucas review] FIXME: should study batchnorm.*/
         forward_batchnorm_layer(l, net);
     } else {
         add_bias(l.output, l.biases, l.batch, l.n, l.out_h*l.out_w);
@@ -486,16 +489,30 @@ void backward_convolutional_layer(convolutional_layer l, network net)
     int n = l.size*l.size*l.c/l.groups;
     int k = l.out_w*l.out_h;
 
+    /*[Lucas review] backward pass for activation function*/
     gradient_array(l.output, l.outputs*l.batch, l.activation, l.delta);
 
+    /*[Lucas review] backward pass for BP Norm*/
     if(l.batch_normalize){
         backward_batchnorm_layer(l, net);
     } else {
         backward_bias(l.bias_updates, l.delta, l.batch, l.n, k);
     }
-
+	
+ 	/*	[Lucas review]	backward pass in conv layer		 
+	 *	dl/dw = dl/dz x dz/dx
+	 *	dw <----------------
+	 *	w  ----------------->    	<--------dl/dz     
+	 *           			CONV	-------->z 
+	 * 	x  ----------------->
+	 *	dx <-----------------
+	 *	dl/dx = dl/dz x dz/dw
+	 *
+	 *	the condition is that, dl/dz = delta, dz = Weight x img2col(input).
+	 */
     for(i = 0; i < l.batch; ++i){
         for(j = 0; j < l.groups; ++j){
+	    /* [Lucas review] cal dl/dw for gradients of the weight */
             float *a = l.delta + (i*l.groups + j)*m*k;
             float *b = net.workspace;
             float *c = l.weight_updates + j*l.nweights/l.groups;
@@ -504,9 +521,10 @@ void backward_convolutional_layer(convolutional_layer l, network net)
 
             im2col_cpu(im, l.c/l.groups, l.h, l.w, 
                     l.size, l.stride, l.pad, b);
-            gemm(0,1,m,n,k,1,a,k,b,k,1,c,n);
+            gemm(0,1,m,n,k,1,a,k,b,k,1,c,n);	
 
             if(net.delta){
+		/*[Lucas review] cal dl/dx and bakward pass it to previous layer */
                 a = l.weights + j*l.nweights/l.groups;
                 b = l.delta + (i*l.groups + j)*m*k;
                 c = net.workspace;

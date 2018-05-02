@@ -91,7 +91,7 @@ matrix copy_matrix(matrix m)
 matrix make_matrix(int rows, int cols)
 {
     int i;
-    matrix m;
+    matrix m; /*FIXME operate stack data out of the scope*/
     m.rows = rows;
     m.cols = cols;
     m.vals = calloc(m.rows, sizeof(float *));

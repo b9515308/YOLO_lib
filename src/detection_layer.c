@@ -13,12 +13,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <unistd.h>
 
 detection_layer make_detection_layer(int batch, int inputs, int n, int side, int classes, int coords, int rescore)
 {
     detection_layer l = {0};
     l.type = DETECTION;
+
     l.n = n;
     l.batch = batch;
     l.inputs = inputs;
@@ -52,13 +52,16 @@ detection_layer make_detection_layer(int batch, int inputs, int n, int side, int
 
 void forward_detection_layer(const detection_layer l, network net)
 {
+
     int locations = l.side*l.side;
     int i,j;
+    /*[Lucas review] l.output = 7*7*30 = class..class(7*7*20),scale..scale(7*7*2),box..box(7*7*2*4)[x,y,w,h] */
     memcpy(l.output, net.input, l.outputs*l.batch*sizeof(float));
     //if(l.reorg) reorg(l.output, l.w*l.h, size*l.n, l.batch, 1);
     int b;
+
+    /*[Lucas review] do softmax for classes of grids*/
     if (l.softmax){
-	printf("[Lucas] do softmax \n");
         for(b = 0; b < l.batch; ++b){
             int index = b*l.inputs;
             for (i = 0; i < locations; ++i) {
@@ -70,7 +73,6 @@ void forward_detection_layer(const detection_layer l, network net)
     }
     
     if(net.train){
-	printf("[Lucas] traning \n");
         float avg_iou = 0;
         float avg_cat = 0;
         float avg_allcat = 0;
@@ -82,10 +84,14 @@ void forward_detection_layer(const detection_layer l, network net)
         memset(l.delta, 0, size * sizeof(float));
         for (b = 0; b < l.batch; ++b){
             int index = b*l.inputs;
+	    /* [Lucas review] locations = 7*7 */
             for (i = 0; i < locations; ++i) {
                 int truth_index = (b*locations + i)*(1+l.coords+l.classes);
                 int is_obj = net.truth[truth_index];
+	     /*[Lucas review] l.n = the number of predicted box = 3*/
                 for (j = 0; j < l.n; ++j) {
+	     /*[Lucas review] p_index = index of confidence score for j'box*/
+	     /*[Lucas review] noobject part's confidence score part in loss function*/	    
                     int p_index = index + locations*l.classes + i*l.n + j;
                     l.delta[p_index] = l.noobject_scale*(0 - l.output[p_index]);
                     *(l.cost) += l.noobject_scale*pow(l.output[p_index], 2);
@@ -101,6 +107,8 @@ void forward_detection_layer(const detection_layer l, network net)
                 }
 
                 int class_index = index + i*l.classes;
+	/*[Lucas review] l.delta's layout is the same as 7*7*30*/
+        /*[Lucas review] classification part in loss function.  */
                 for(j = 0; j < l.classes; ++j) {
                     l.delta[class_index+j] = l.class_scale * (net.truth[truth_index+1+j] - l.output[class_index+j]);
                     *(l.cost) += l.class_scale * pow(net.truth[truth_index+1+j] - l.output[class_index+j], 2);
@@ -109,14 +117,16 @@ void forward_detection_layer(const detection_layer l, network net)
                 }
 
                 box truth = float_to_box(net.truth + truth_index + 1 + l.classes, 1);
+		/*[Lucas review] only for reduce calculation complexity to some extent.*/
                 truth.x /= l.side;
                 truth.y /= l.side;
 
+		/*[Lucas review] l.n = 2 =  the number of box*/
                 for(j = 0; j < l.n; ++j){
                     int box_index = index + locations*(l.classes + l.n) + (i*l.n + j) * l.coords;
                     box out = float_to_box(l.output + box_index, 1);
-                    out.x /= l.side;
-                    out.y /= l.side;
+                   out.x /= l.side;
+                   out.y /= l.side;
 
                     if (l.sqrt){
                         out.w = out.w*out.w;
@@ -163,8 +173,12 @@ void forward_detection_layer(const detection_layer l, network net)
                 float iou  = box_iou(out, truth);
 
                 //printf("%d,", best_index);
+		/*[Lucas review] get the predicted confidence score for the grid */
                 int p_index = index + locations*l.classes + i*l.n + best_index;
+		/*[Lucas review] reduct extra added confidence loss of grids back on noobj loss accumulation*/
                 *(l.cost) -= l.noobject_scale * pow(l.output[p_index], 2);
+		/*[Lucas review] lamda obj part in loss function*/
+		/*[Lucas review] only calculate the loss for best box. as metioned in paper*/
                 *(l.cost) += l.object_scale * pow(1-l.output[p_index], 2);
                 avg_obj += l.output[p_index];
                 l.delta[p_index] = l.object_scale * (1.-l.output[p_index]);
@@ -173,18 +187,21 @@ void forward_detection_layer(const detection_layer l, network net)
                     l.delta[p_index] = l.object_scale * (iou - l.output[p_index]);
                 }
 
+		/*[Lucas review] corrdination part in loss function*/
                 l.delta[box_index+0] = l.coord_scale*(net.truth[tbox_index + 0] - l.output[box_index + 0]);
                 l.delta[box_index+1] = l.coord_scale*(net.truth[tbox_index + 1] - l.output[box_index + 1]);
                 l.delta[box_index+2] = l.coord_scale*(net.truth[tbox_index + 2] - l.output[box_index + 2]);
                 l.delta[box_index+3] = l.coord_scale*(net.truth[tbox_index + 3] - l.output[box_index + 3]);
                 if(l.sqrt){
+		    /*[Lucas review] when l.sqrt=1, l.ouput[w,h] are trainning as sqrt(w) and sqrt(h), otherwise as w and h.*/
+                    /*[Lucas review] yolov1.cfg follow the loss function paper described, l.sqrt = 1*/
                     l.delta[box_index+2] = l.coord_scale*(sqrt(net.truth[tbox_index + 2]) - l.output[box_index + 2]);
                     l.delta[box_index+3] = l.coord_scale*(sqrt(net.truth[tbox_index + 3]) - l.output[box_index + 3]);
                 }
-
+		/*[Lucas review] FIXME loss function already compensate the loss of confidence score, why */
                 *(l.cost) += pow(1-iou, 2);
-                avg_iou += iou;
-                ++count;
+                avg_iou += iou; /*used to calculated average iou of represented boxes.*/
+                ++count; /*[Lucas review] counting the quantity of represented boxes for 7x7 grids.*/
             }
         }
 
@@ -214,7 +231,7 @@ void forward_detection_layer(const detection_layer l, network net)
             free(costs);
         }
 
-
+	/*[Lucas review] FIXME don't know what is this line for ?*/
         *(l.cost) = pow(mag_array(l.delta, l.outputs * l.batch), 2);
 
 
@@ -238,13 +255,13 @@ void save_prediction_files(float *data)
     if (fd == -1)
 	       printf("[OBJ DECTOR] save data failed\n");
 
-    printf("[OBJ DECTOR] float = %lu bytes\n",sizeof(float));
-    printf("[OBJ DECTOR] prediction size = %lu bytes\n", 7*7*30*sizeof(float));
+    printf("[OBJ DECTOR] float = %d bytes\n",sizeof(float));
+    printf("[OBJ DECTOR] prediction size = %d bytes\n", 7*7*30*sizeof(float));
     nr = write(fd, data,7*7*30*sizeof(float));
     if (nr == -1)
 	       printf("[OBJ DECTOR] copy error\n");
 
-    dump = (unsigned int *)data;
+    dump = data;
     printf("[OBJ DECTOR] save %d bytes to ./prediction_cube.bin\n", nr);
     printf("[OBJ DECTOR] dump data for check\n");
     printf("000000000: %x %x %x %x\n", *dump, *(dump+1), *(dump+2),*(dump+3));
@@ -259,16 +276,19 @@ void get_detection_boxes(layer l, int w, int h, float thresh, float **probs, box
     float *predictions = l.output;
     //int per_cell = 5*num+classes;
 
-//    save_prediction_files(predictions);
+    //save_prediction_files(predictions);
 
     for (i = 0; i < l.side*l.side; ++i){
         int row = i / l.side;
         int col = i % l.side;
 	for(n = 0; n < l.n; ++n){
-            int index = i*l.n + n; /*class..class(7*7*20),scale..scale(7*7*2),box..box(7*7*2*2)[x,y,w,h] */
+            int index = i*l.n + n; /*class..class(7*7*20),scale..scale(7*7*2),box..box(7*7*2*4)[x,y,w,h] */
             int p_index = l.side*l.side*l.classes + i*l.n + n;
             float scale = predictions[p_index];
             int box_index = l.side*l.side*(l.classes + l.n) + (i*l.n + n)*4;
+
+            /*[Lucas review] x,y is calculated and based on 7*7 grids, so it need to divide to l.side */
+   	    /*[Lucas review] x,y is the offset withine a grid, so prediction[]+col/raw represents the central corrdination completly */
             boxes[index].x = (predictions[box_index + 0] + col) / l.side * w;
             boxes[index].y = (predictions[box_index + 1] + row) / l.side * h;
             boxes[index].w = pow(predictions[box_index + 2], (l.sqrt?2:1)) * w;
@@ -294,9 +314,7 @@ void forward_detection_layer_gpu(const detection_layer l, network net)
         return;
     }
 
-    //float *in_cpu = calloc(l.batch*l.inputs, sizeof(float));
-    //float *truth_cpu = 0;
-
+    cuda_pull_array(net.input_gpu, net.input, l.batch*l.inputs);
     forward_detection_layer(l, net);
     cuda_push_array(l.output_gpu, l.output, l.batch*l.outputs);
     cuda_push_array(l.delta_gpu, l.delta, l.batch*l.inputs);

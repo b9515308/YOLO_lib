@@ -137,14 +137,15 @@ void forward_batchnorm_layer(layer l, network net)
     if(l.type == BATCHNORM) copy_cpu(l.outputs*l.batch, net.input, 1, l.output, 1);
     copy_cpu(l.outputs*l.batch, l.output, 1, l.x, 1);
     if(net.train){
+	/*[Lucas review] follow Batch normalization define to get mean and var.*/
+	/*[Lucas review] YOLO make one mean and var for one output filter, so dim(mean/var) is num_out_filter X 1*/
         mean_cpu(l.output, l.batch, l.out_c, l.out_h*l.out_w, l.mean);
         variance_cpu(l.output, l.mean, l.batch, l.out_c, l.out_h*l.out_w, l.variance);
-
         scal_cpu(l.out_c, .99, l.rolling_mean, 1);
         axpy_cpu(l.out_c, .01, l.mean, 1, l.rolling_mean, 1);
         scal_cpu(l.out_c, .99, l.rolling_variance, 1);
         axpy_cpu(l.out_c, .01, l.variance, 1, l.rolling_variance, 1);
-
+	
         normalize_cpu(l.output, l.mean, l.variance, l.batch, l.out_c, l.out_h*l.out_w);   
         copy_cpu(l.outputs*l.batch, l.output, 1, l.x_norm, 1);
     } else {
@@ -160,9 +161,12 @@ void backward_batchnorm_layer(layer l, network net)
         l.mean = l.rolling_mean;
         l.variance = l.rolling_variance;
     }
+/*[Lucas review] YOLO follows BPNORM paper to design backword walk*/
+/*[Lucas review] dout = delta = class..,confidence score...,xywh...*/
+/*[Lucas review] dbeta = 1 x sigma(i=1,b)sigma(j=0,wxh)dout(i,j), for each filter*/
     backward_bias(l.bias_updates, l.delta, l.batch, l.out_c, l.out_w*l.out_h);
+/*[Lucas review] dgama = norm(X) *sigma(i=1,b)sigma(j=0,wxh)(norm(X)xdout(i,j)), for each filter. */
     backward_scale_cpu(l.x_norm, l.delta, l.batch, l.out_c, l.out_w*l.out_h, l.scale_updates);
-
     scale_bias(l.delta, l.scales, l.batch, l.out_c, l.out_h*l.out_w);
 
     mean_delta_cpu(l.delta, l.variance, l.batch, l.out_c, l.out_w*l.out_h, l.mean_delta);

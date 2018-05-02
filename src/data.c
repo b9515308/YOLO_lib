@@ -203,6 +203,8 @@ void correct_boxes(box_label *boxes, int n, float dx, float dy, float sx, float 
         boxes[i].top =   constrain(0, 1, boxes[i].top);
         boxes[i].bottom =   constrain(0, 1, boxes[i].bottom);
 
+        /*[Lucas review] the unit is per pixcel. you can multiply it with 440 to get the box size corresponding to 440 x 440*/
+
         boxes[i].x = (boxes[i].left+boxes[i].right)/2;
         boxes[i].y = (boxes[i].top+boxes[i].bottom)/2;
         boxes[i].w = (boxes[i].right - boxes[i].left);
@@ -262,12 +264,17 @@ void fill_truth_region(char *path, float *truth, int classes, int num_boxes, int
     find_replace(labelpath, ".JPG", ".txt", labelpath);
     find_replace(labelpath, ".JPEG", ".txt", labelpath);
     int count = 0;
+    /*[Lucas review] read truth box detection data under darknet/VOCdevkit/VOC2007/labels and the one in 2012*/
     box_label *boxes = read_boxes(labelpath, &count);
+    /*[Lucas review] don't know why do ramdomize and correct boxes with parameters ?*/
     randomize_boxes(boxes, count);
     correct_boxes(boxes, count, dx, dy, sx, sy, flip);
     float x,y,w,h;
     int id;
     int i;
+
+    /*[Lucas review] set up truth[]*/
+    /*[Lucas review] truth[] layout: 1 valid bit, 20 class,x,y,w,h  (total = 7*7*1+20+4)*/
 
     for (i = 0; i < count; ++i) {
         x =  boxes[i].x;
@@ -280,10 +287,8 @@ void fill_truth_region(char *path, float *truth, int classes, int num_boxes, int
 
         int col = (int)(x*num_boxes);
         int row = (int)(y*num_boxes);
-
         x = x*num_boxes - col;
         y = y*num_boxes - row;
-
         int index = (col+row*num_boxes)*(5+classes);
         if (truth[index]) continue;
         truth[index++] = 1;
@@ -777,16 +782,22 @@ data load_data_region(int n, char **paths, int m, int w, int h, int size, int cl
     data d = {0};
     d.shallow = 0;
 
+    /* [Lucas review] load_data_region: d.X represents a batch data. e.g. 64 samples*/
     d.X.rows = n;
     d.X.vals = calloc(d.X.rows, sizeof(float*));
     d.X.cols = h*w*3;
 
 
     int k = size*size*(5+classes);
+    /* [Lucas review] load_data_region: d.y is truth data*/
+    /* [Lucas review] dim of n represents as the number of samples for batches*/
+    /* [Lucas review] dim of k represents as layout of truth data.*/
+    /* [Lucas review] k's layout is (is_obj(1),class,class,...class(20),x,y,w,h(4)) for 7*7 grids, totoal quantity is 7*7*(1+20+4) */
+
     d.y = make_matrix(n, k);
+    /*[Lucas review] Load smaples for a batach, which eqauls l.batch*l.subdivision*/
     for(i = 0; i < n; ++i){
         image orig = load_image_color(random_paths[i], 0, 0);
-
         int oh = orig.h;
         int ow = orig.w;
 
@@ -805,6 +816,7 @@ data load_data_region(int n, char **paths, int m, int w, int h, int size, int cl
         float sy = (float)sheight / oh;
 
         int flip = rand()%2;
+	/*[Lucas review] FIXME don't know why do image adjustion ? */
         image cropped = crop_image(orig, pleft, ptop, swidth, sheight);
 
         float dx = ((float)pleft/ow)/sx;
@@ -814,7 +826,8 @@ data load_data_region(int n, char **paths, int m, int w, int h, int size, int cl
         if(flip) flip_image(sized);
         random_distort_image(sized, hue, saturation, exposure);
         d.X.vals[i] = sized.data;
-
+	/*[Lucas review] setup truth data to d.y*/
+        /*[Lucas review] size = 7*/
         fill_truth_region(random_paths[i], d.y.vals[i], classes, size, flip, dx, dy, 1./sx, 1./sy);
 
         free_image(orig);
@@ -1018,7 +1031,7 @@ void *load_thread(void *ptr)
         *a.d = load_data_seg(a.n, a.paths, a.m, a.w, a.h, a.classes, a.min, a.max, a.angle, a.aspect, a.hue, a.saturation, a.exposure, a.scale);
     } else if (a.type == REGION_DATA){
         *a.d = load_data_region(a.n, a.paths, a.m, a.w, a.h, a.num_boxes, a.classes, a.jitter, a.hue, a.saturation, a.exposure);
-    } else if (a.type == DETECTION_DATA){
+    } else if (a.type == DETECTION_DATA){ /*[Lucas review] a.num_boxes = side of grid = 7*/
         *a.d = load_data_detection(a.n, a.paths, a.m, a.w, a.h, a.num_boxes, a.classes, a.jitter, a.hue, a.saturation, a.exposure);
     } else if (a.type == SWAG_DATA){
         *a.d = load_data_swag(a.paths, a.n, a.classes, a.jitter);
@@ -1377,7 +1390,7 @@ void smooth_data(data d)
     float scale = 1. / d.y.cols;
     float eps = .1;
     for(i = 0; i < d.y.rows; ++i){
-        for(j = 0; j < d.y.cols; ++j){
+	    for(j = 0; j < d.y.cols; ++j){
             d.y.vals[i][j] = eps * scale + (1-eps) * d.y.vals[i][j];
         }
     }
